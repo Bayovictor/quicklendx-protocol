@@ -60,19 +60,25 @@ pub fn store_idempotency_result<T: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use crate::contract::QuickLendXContract;
+    use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
     fn test_idempotency_result() {
         let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(QuickLendXContract, ());
+
         let key = BytesN::from_array(&env, &[1; 32]);
         let result = BytesN::from_array(&env, &[2; 32]);
 
-        assert_eq!(get_idempotency_result::<BytesN<32>>(&env, &key), None);
-        store_idempotency_result(&env, &key, &result);
-        assert_eq!(
-            get_idempotency_result::<BytesN<32>>(&env, &key),
-            Some(result)
-        );
+        env.as_contract(&contract_id, || {
+            assert_eq!(get_idempotency_result::<BytesN<32>>(&env, &key), None);
+            store_idempotency_result(&env, &key, &result);
+            assert_eq!(
+                get_idempotency_result::<BytesN<32>>(&env, &key),
+                Some(result)
+            );
+        });
     }
 }

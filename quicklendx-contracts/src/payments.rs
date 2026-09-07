@@ -1601,6 +1601,61 @@ mod payments_tests {
         currency
     }
 
+    /// Store a minimal invoice in persistent storage so `create_escrow` can
+    /// find it via `InvoiceStorage::get_invoice`. The invoice is stored as
+    /// the contract itself (inside `env.as_contract`).
+    fn store_test_invoice(
+        env: &Env,
+        contract_id: &Address,
+        invoice_id: &BytesN<32>,
+        business: &Address,
+        currency: &Address,
+    ) {
+        env.as_contract(contract_id, || {
+            let invoice = crate::types::Invoice {
+                id: invoice_id.clone(),
+                business: business.clone(),
+                amount: crate::protocol_limits::MAX_INVOICE_AMOUNT,
+                currency: currency.clone(),
+                due_date: env.ledger().timestamp() + 86_400 * 30,
+                status: crate::types::InvoiceStatus::Verified,
+                created_at: env.ledger().timestamp(),
+                description: soroban_sdk::String::from_str(env, "test"),
+                metadata_customer_name: None,
+                metadata_customer_address: None,
+                metadata_tax_id: None,
+                metadata_notes: None,
+                metadata_line_items: soroban_sdk::Vec::new(env),
+                category: crate::types::InvoiceCategory::Services,
+                tags: soroban_sdk::Vec::new(env),
+                funded_amount: 0,
+                funded_at: None,
+                investor: None,
+                settled_at: None,
+                average_rating: None,
+                total_ratings: 0,
+                ratings: soroban_sdk::Vec::new(env),
+                dispute_status: crate::types::DisputeStatus::None,
+                dispute: crate::types::Dispute {
+                    created_by: business.clone(),
+                    created_at: 0,
+                    reason: soroban_sdk::String::from_str(env, ""),
+                    evidence: soroban_sdk::String::from_str(env, ""),
+                    resolution: soroban_sdk::String::from_str(env, ""),
+                    resolved_by: business.clone(),
+                    resolved_at: 0,
+                    resolution_outcome: crate::types::DisputeResolution::None,
+                },
+                total_paid: 0,
+                payment_history: soroban_sdk::Vec::new(env),
+                origination_fee_bps: None,
+                late_payment_penalty_bps: None,
+                early_payment_discount_bps: None,
+            };
+            crate::storage::InvoiceStorage::store_invoice(env, &invoice);
+        });
+    }
+
     // -----------------------------------------------------------------------
     // Zero-amount boundary
     // -----------------------------------------------------------------------
@@ -1658,6 +1713,7 @@ mod payments_tests {
     fn test_create_escrow_max_amount_with_zero_balance_fails() {
         let (env, contract_id) = contract_env();
         let investor = Address::generate(&env);
+        let business = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let currency = mint_and_approve(
             &env,
@@ -1669,6 +1725,7 @@ mod payments_tests {
         );
 
         let invoice_id = BytesN::from_array(&env, &[2u8; 32]);
+        store_test_invoice(&env, &contract_id, &invoice_id, &business, &currency);
         let tok = token::Client::new(&env, &currency);
 
         let result = env.as_contract(&contract_id, || {
@@ -1676,7 +1733,7 @@ mod payments_tests {
                 &env,
                 &invoice_id,
                 &investor,
-                &Address::generate(&env),
+                &business,
                 crate::protocol_limits::MAX_INVOICE_AMOUNT,
                 &currency,
             )
@@ -1694,24 +1751,19 @@ mod payments_tests {
     fn test_create_escrow_amount_exceeds_balance_returns_insufficient_funds() {
         let (env, contract_id) = contract_env();
         let investor = Address::generate(&env);
+        let business = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let currency = mint_and_approve(&env, &contract_id, &token_admin, &investor, 5_000, 10_000);
 
         let invoice_id = BytesN::from_array(&env, &[3u8; 32]);
+        store_test_invoice(&env, &contract_id, &invoice_id, &business, &currency);
         let tok = token::Client::new(&env, &currency);
 
         let investor_bal = tok.balance(&investor);
         let contract_bal = tok.balance(&contract_id);
 
         let result = env.as_contract(&contract_id, || {
-            create_escrow(
-                &env,
-                &invoice_id,
-                &investor,
-                &Address::generate(&env),
-                5_001,
-                &currency,
-            )
+            create_escrow(&env, &invoice_id, &investor, &business, 5_001, &currency)
         });
         assert_eq!(result, Err(QuickLendXError::InsufficientFunds));
         assert_eq!(tok.balance(&investor), investor_bal);
@@ -1734,6 +1786,7 @@ mod payments_tests {
 
         let (env, contract_id) = contract_env();
         let investor = Address::generate(&env);
+        let business = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let currency = mint_and_approve(
             &env,
@@ -1745,6 +1798,7 @@ mod payments_tests {
         );
 
         let invoice_id = BytesN::from_array(&env, &[4u8; 32]);
+        store_test_invoice(&env, &contract_id, &invoice_id, &business, &currency);
         let tok = token::Client::new(&env, &currency);
 
         let result = env.as_contract(&contract_id, || {
@@ -1752,7 +1806,7 @@ mod payments_tests {
                 &env,
                 &invoice_id,
                 &investor,
-                &Address::generate(&env),
+                &business,
                 MAX_INVOICE_AMOUNT,
                 &currency,
             )
@@ -1777,7 +1831,7 @@ mod payments_tests {
                 &env,
                 &invoice_id_over,
                 &investor,
-                &Address::generate(&env),
+                &business,
                 MAX_INVOICE_AMOUNT + 1,
                 &currency,
             )
@@ -1853,6 +1907,7 @@ mod payments_tests {
         let (env, contract_id) = contract_env();
         let investor1 = Address::generate(&env);
         let investor2 = Address::generate(&env);
+        let business = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let currency =
             mint_and_approve(&env, &contract_id, &token_admin, &investor1, 10_000, 10_000);
@@ -1863,30 +1918,17 @@ mod payments_tests {
         tok.approve(&investor2, &contract_id, &10_000, &expiry);
 
         let invoice_id = BytesN::from_array(&env, &[6u8; 32]);
+        store_test_invoice(&env, &contract_id, &invoice_id, &business, &currency);
 
         // First escrow
         let r1 = env.as_contract(&contract_id, || {
-            create_escrow(
-                &env,
-                &invoice_id,
-                &investor1,
-                &Address::generate(&env),
-                10_000,
-                &currency,
-            )
+            create_escrow(&env, &invoice_id, &investor1, &business, 10_000, &currency)
         });
         assert!(r1.is_ok(), "first escrow must succeed");
 
         // Second attempt (different investor) must fail
         let r2 = env.as_contract(&contract_id, || {
-            create_escrow(
-                &env,
-                &invoice_id,
-                &investor2,
-                &Address::generate(&env),
-                5_000,
-                &currency,
-            )
+            create_escrow(&env, &invoice_id, &investor2, &business, 5_000, &currency)
         });
         assert_eq!(r2, Err(QuickLendXError::InvoiceAlreadyFunded));
     }
@@ -1955,8 +1997,9 @@ mod payments_tests {
 
     #[test]
     fn test_allocate_repayment_treasury_split() {
-        // principal 0 so all payment is profit: payment 10_000, fee 1000 bps -> fee 1000
-        let a = allocate_repayment(0, 10_000, 1000, 0, 5000).unwrap();
+        // principal=5000, payment=10000 → gross_profit=5000
+        // fee_bps=2000 → platform_fee=1000, treasury_share=5000 bps → 50/50 split
+        let a = allocate_repayment(5_000, 10_000, 2000, 0, 5000).unwrap();
         assert_eq!(a.platform_fee, 1000);
         assert_eq!(a.treasury_amount, 500);
         assert_eq!(a.treasury_remaining, 500);
@@ -1999,9 +2042,10 @@ mod payments_tests {
     #[test]
     fn test_allocate_repayment_fee_bps_clamped() {
         // fee_bps beyond 10000 is clamped, so it behaves like 10000 (full profit)
-        let a = allocate_repayment(0, 10_000, 99_999, 0, 10_000).unwrap();
+        // principal=100, payment=10100 → gross_profit=10000 → platform_fee=10000
+        let a = allocate_repayment(100, 10_100, 99_999, 0, 10_000).unwrap();
         assert_eq!(a.platform_fee, 10_000);
-        assert_eq!(a.investor_return, 0);
+        assert_eq!(a.investor_return, 100);
     }
 
     #[test]
