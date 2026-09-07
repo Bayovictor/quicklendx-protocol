@@ -2,6 +2,7 @@
 //!
 //! Handles platform fee configuration, revenue tracking, volume-tier discounts,
 //! and treasury routing for all fee types supported by the protocol.
+use crate::admin::AdminStorage;
 use crate::audit::{log_config_change, write_i128_to_buf, write_u64_to_buf, AuditOperation};
 use crate::errors::QuickLendXError;
 use crate::events;
@@ -243,7 +244,7 @@ impl FeeManager {
     pub fn initialize(env: &Env, admin: &Address) -> Result<(), QuickLendXError> {
         // Explicit admin authorization: the caller must be the designated admin.
         admin.require_auth();
-        crate::AdminStorage::require_admin(env, admin)?;
+        AdminStorage::require_admin(env, admin)?;
 
         // Guard: reject re-initialization to prevent overwriting live fee config.
         if env.storage().instance().has(&FEES_INIT_KEY) {
@@ -307,7 +308,7 @@ impl FeeManager {
         treasury_address: Address,
     ) -> Result<TreasuryConfig, QuickLendXError> {
         admin.require_auth();
-        crate::AdminStorage::require_admin(env, admin)?;
+        AdminStorage::require_admin(env, admin)?;
 
         // Reject self-assignment: treasury must not be the contract itself.
         if treasury_address == env.current_contract_address() {
@@ -351,7 +352,7 @@ impl FeeManager {
     ) -> Result<(), QuickLendXError> {
         // Auth is checked by the caller
         admin.require_auth();
-        crate::AdminStorage::require_admin(env, admin)?;
+        AdminStorage::require_admin(env, admin)?;
 
         if fee_bps > MAX_PLATFORM_FEE_BPS {
             return Err(QuickLendXError::InvalidFeeBasisPoints);

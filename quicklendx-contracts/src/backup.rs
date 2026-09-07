@@ -396,7 +396,7 @@ impl BackupStorage {
 
         let restore_outcome: Result<u32, QuickLendXError> = (|| {
             // Fetch the validated payload.
-            let data = Self::get_backup_data(env, backup_id).unwrap();
+            let _data = Self::get_backup_data(env, backup_id).unwrap();
 
             let restored_count = data.len();
 

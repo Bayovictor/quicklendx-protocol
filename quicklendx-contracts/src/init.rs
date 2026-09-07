@@ -1028,6 +1028,7 @@ fn emit_protocol_initialized(
 }
 
 /// Emit protocol configuration update event
+#[allow(deprecated)]
 fn emit_protocol_config_updated(
     env: &Env,
     admin: &Address,
@@ -1048,6 +1049,7 @@ fn emit_protocol_config_updated(
 }
 
 /// Emit fee configuration update event
+#[allow(deprecated)]
 fn emit_fee_config_updated(env: &Env, admin: &Address, fee_bps: u32) {
     env.events().publish(
         (symbol_short!("fee_cfg"),),
@@ -1056,6 +1058,7 @@ fn emit_fee_config_updated(env: &Env, admin: &Address, fee_bps: u32) {
 }
 
 /// Emit treasury update event
+#[allow(deprecated)]
 fn emit_treasury_updated(env: &Env, admin: &Address, treasury: &Address) {
     env.events().publish(
         (symbol_short!("trsr_upd"),),

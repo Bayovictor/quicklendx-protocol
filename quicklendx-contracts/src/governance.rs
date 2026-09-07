@@ -72,6 +72,7 @@ fn active_proposals_count(env: &Env) -> u32 {
         .unwrap_or(0)
 }
 
+#[allow(dead_code)]
 fn increment_active_proposals(env: &Env) {
     let count = active_proposals_count(env).saturating_add(1);
     env.storage()

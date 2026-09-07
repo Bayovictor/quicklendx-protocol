@@ -347,6 +347,8 @@ pub struct Escrow {
     pub amount: i128,
     pub currency: Address,
     pub created_at: u64,
+    pub released_at: Option<u64>,
+    pub refunded_at: Option<u64>,
     pub status: EscrowStatus,
 }
 
@@ -794,6 +796,8 @@ fn write_escrow_record(
         amount,
         currency: currency.clone(),
         created_at: env.ledger().timestamp(),
+        released_at: None,
+        refunded_at: None,
         status: EscrowStatus::Held,
     };
 
@@ -890,6 +894,8 @@ pub fn create_escrow_record_only(
         amount,
         currency: currency.clone(),
         created_at: env.ledger().timestamp(),
+        released_at: None,
+        refunded_at: None,
         status: EscrowStatus::Held,
     };
 
@@ -1569,7 +1575,7 @@ mod payments_tests {
     use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env};
 
     fn contract_env() -> (Env, Address) {
-        use crate::QuickLendXContract;
+        use crate::contract::QuickLendXContract;
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register(QuickLendXContract, ());

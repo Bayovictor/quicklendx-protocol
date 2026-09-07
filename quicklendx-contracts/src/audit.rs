@@ -55,6 +55,8 @@ pub enum AuditOperation {
     BidPlaced,
     BidAccepted,
     BidWithdrawn,
+    BidCancelled,
+    BidExpired,
     EscrowCreated,
     EscrowReleased,
     EscrowRefunded,
@@ -127,6 +129,8 @@ pub enum OpType {
     BidPlaced,
     BidAccepted,
     BidWithdrawn,
+    BidCancelled,
+    BidExpired,
     EscrowCreated,
     EscrowReleased,
     EscrowRefunded,
@@ -172,6 +176,8 @@ impl OpType {
             OpType::BidPlaced => symbol_short!("bid_plc"),
             OpType::BidAccepted => symbol_short!("bid_acc"),
             OpType::BidWithdrawn => symbol_short!("bid_wdr"),
+            OpType::BidCancelled => symbol_short!("bid_cnl"),
+            OpType::BidExpired => symbol_short!("bid_exp"),
             OpType::EscrowCreated => symbol_short!("esc_cr"),
             OpType::EscrowReleased => symbol_short!("esc_rel"),
             OpType::EscrowRefunded => symbol_short!("esc_ref"),
@@ -217,6 +223,8 @@ impl OpType {
             OpType::BidPlaced => 8,
             OpType::BidAccepted => 9,
             OpType::BidWithdrawn => 10,
+            OpType::BidCancelled => 39,
+            OpType::BidExpired => 40,
             OpType::EscrowCreated => 11,
             OpType::EscrowReleased => 12,
             OpType::EscrowRefunded => 13,
@@ -263,6 +271,8 @@ impl From<AuditOperation> for OpType {
             AuditOperation::BidPlaced => OpType::BidPlaced,
             AuditOperation::BidAccepted => OpType::BidAccepted,
             AuditOperation::BidWithdrawn => OpType::BidWithdrawn,
+            AuditOperation::BidCancelled => OpType::BidCancelled,
+            AuditOperation::BidExpired => OpType::BidExpired,
             AuditOperation::EscrowCreated => OpType::EscrowCreated,
             AuditOperation::EscrowReleased => OpType::EscrowReleased,
             AuditOperation::EscrowRefunded => OpType::EscrowRefunded,
@@ -569,6 +579,8 @@ fn operation_tag(operation: &AuditOperation) -> u8 {
         AuditOperation::BidPlaced => 8,
         AuditOperation::BidAccepted => 9,
         AuditOperation::BidWithdrawn => 10,
+        AuditOperation::BidCancelled => 39,
+        AuditOperation::BidExpired => 40,
         AuditOperation::EscrowCreated => 11,
         AuditOperation::EscrowReleased => 12,
         AuditOperation::EscrowRefunded => 13,
@@ -753,7 +765,7 @@ impl AuditStorage {
         filter: &AuditQueryFilter,
         limit: u32,
     ) -> Vec<AuditLogEntry> {
-        let capped_limit = limit.min(crate::MAX_QUERY_LIMIT);
+        let capped_limit = limit.min(crate::pagination::MAX_QUERY_LIMIT);
         let mut results = Vec::new(env);
         let mut count = 0u32;
 
@@ -1186,14 +1198,14 @@ pub fn log_invoice_cancelled(env: &Env, invoice_id: BytesN<32>, actor: Address) 
 /// produced it, so downstream systems can match the emitted bid event
 /// (`BidPlaced`/`BidAccepted`/... which carry `bid_id`) to its audit record.
 fn bid_correlation(env: &Env, bid_id: &BytesN<32>) -> String {
-    let mut hex_bytes = alloc::vec::Vec::new();
-    for byte in bid_id.to_array().iter() {
+    let mut hex_bytes = [0u8; 64];
+    for (i, byte) in bid_id.to_array().iter().enumerate() {
         let high = byte >> 4;
         let low = byte & 0x0F;
-        hex_bytes.push(nibble_to_hex(high));
-        hex_bytes.push(nibble_to_hex(low));
+        hex_bytes[i * 2] = nibble_to_hex(high);
+        hex_bytes[i * 2 + 1] = nibble_to_hex(low);
     }
-    String::from_str(env, &(core::str::from_utf8(&hex_bytes).unwrap_or("")))
+    String::from_str(env, core::str::from_utf8(&hex_bytes).unwrap_or(""))
 }
 
 fn nibble_to_hex(nibble: u8) -> u8 {

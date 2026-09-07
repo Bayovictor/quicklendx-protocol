@@ -463,7 +463,7 @@ pub fn process_partial_payment(
         recorded.applied_amount,
     );
 
-    if progress.total_paid >= progress.total_due {
+    if recorded.progress.total_paid >= recorded.progress.total_due {
         settle_invoice_internal(env, invoice_id, &payer)?;
     }
 
@@ -725,7 +725,7 @@ pub fn settle_invoice(
     env: &Env,
     invoice_id: &BytesN<32>,
     payment_amount: i128,
-    snap: &crate::types::Investment,
+    _snap: &crate::types::Investment,
     business: &Address,
 ) -> Result<(), QuickLendXError> {
     if payment_amount <= 0 {
@@ -871,7 +871,7 @@ pub fn get_payment_records(
     let total = get_payment_count_internal(env, invoice_id);
     let mut records = Vec::new(env);
 
-    let actual_limit = limit.min(crate::MAX_QUERY_LIMIT); // Enforce practical upper bound for gas safety
+    let actual_limit = limit.min(crate::pagination::MAX_QUERY_LIMIT); // Enforce practical upper bound for gas safety
     let end = from.saturating_add(actual_limit).min(total);
 
     for idx in from..end {
@@ -940,6 +940,7 @@ pub fn store_settlement_currencies(
 
 /// Check that `invoice_currency` is in the per-invoice settlement currency
 /// whitelist.  When no whitelist is stored (backward compat) the check passes.
+#[allow(dead_code)]
 fn require_settlement_currency_allowed(
     env: &Env,
     invoice_id: &BytesN<32>,
@@ -1047,7 +1048,7 @@ fn settle_invoice_internal(
     // This ensures the business receives the original funded amount during the settlement transition.
     if let Some(escrow) = crate::payments::EscrowStorage::get_escrow_by_invoice(env, invoice_id) {
         if escrow.status == crate::payments::EscrowStatus::Held {
-            crate::payments::release_escrow(env, invoice_id)?;
+            crate::payments::release_escrow(env, invoice_id, &invoice.business)?;
         }
     }
 
@@ -1234,6 +1235,7 @@ fn get_payment_count_internal(env: &Env, invoice_id: &BytesN<32>) -> u32 {
         .unwrap_or(0)
 }
 
+#[allow(dead_code)]
 fn get_last_applied_amount(env: &Env, invoice_id: &BytesN<32>) -> Result<i128, QuickLendXError> {
     let count = get_payment_count_internal(env, invoice_id);
     if count == 0 {
@@ -1251,6 +1253,7 @@ fn make_settlement_nonce(env: &Env) -> String {
     String::from_str(env, "settlement")
 }
 
+#[allow(deprecated)]
 fn emit_payment_recorded(
     env: &Env,
     invoice_id: &BytesN<32>,
@@ -1271,6 +1274,7 @@ fn emit_payment_recorded(
     );
 }
 
+#[allow(deprecated)]
 fn emit_invoice_settled_final(
     env: &Env,
     invoice_id: &BytesN<32>,

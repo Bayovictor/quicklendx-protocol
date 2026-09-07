@@ -1183,35 +1183,51 @@ impl BidStorage {
     /// Stale bids (past their raw expiry, even while a grace window delays
     /// their `Placed -> Expired` storage transition) are excluded, matching
     /// `accept_bid` and `get_bids_by_status`.
+    ///
+    /// # Complexity
+    /// O(n²) comparisons but zero intermediate vector allocations — uses an
+    /// in-place selection marker instead of rebuilding a `remaining` slice on
+    /// each iteration.  Bounded by `MAX_BIDS_PER_INVOICE` (50), so the
+    /// quadratic behaviour stays well within Soroban compute budgets.
     pub fn rank_bids(env: &Env, invoice_id: &BytesN<32>) -> Vec<Bid> {
         let records = Self::get_bid_records_for_invoice(env, invoice_id);
         let current_timestamp = env.ledger().timestamp();
-        let mut remaining = Vec::new(env);
+
+        // Collect only eligible (Placed, non-expired) bids in original order.
+        let mut eligible = Vec::new(env);
         let mut idx: u32 = 0;
         while idx < records.len() {
             let bid = records.get(idx).unwrap();
             if bid.status == BidStatus::Placed && !bid.is_expired(current_timestamp) {
-                remaining.push_back(bid);
+                eligible.push_back(bid);
             }
             idx += 1;
         }
 
+        let n = eligible.len();
         let mut ranked = Vec::new(env);
+        let mut used = Vec::new(env);
+        for _ in 0..n {
+            used.push_back(false);
+        }
 
-        while !remaining.is_empty() {
-            let best_idx = Self::select_best_index(&remaining).unwrap();
-            let best_bid = remaining.get(best_idx).unwrap();
-            ranked.push_back(best_bid);
-
-            let mut new_remaining = Vec::new(env);
-            let mut copy_idx: u32 = 0;
-            while copy_idx < remaining.len() {
-                if copy_idx != best_idx {
-                    new_remaining.push_back(remaining.get(copy_idx).unwrap());
+        // Selection sort: for each position, scan eligible for the best unused bid.
+        for _ in 0..n {
+            let mut best_idx: u32 = 0;
+            let mut best_bid = eligible.get(0).unwrap();
+            let mut i: u32 = 0;
+            while i < n {
+                if !used.get(i).unwrap() {
+                    let candidate = eligible.get(i).unwrap();
+                    if Self::compare_bids(&candidate, &best_bid) == Ordering::Greater {
+                        best_idx = i;
+                        best_bid = candidate;
+                    }
                 }
-                copy_idx += 1;
+                i += 1;
             }
-            remaining = new_remaining;
+            used.set(best_idx, true);
+            ranked.push_back(best_bid);
         }
 
         ranked

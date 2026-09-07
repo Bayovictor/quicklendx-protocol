@@ -350,6 +350,7 @@ impl NotificationSystem {
     /// 1. **Immediate rejection** at the contract level (no event emission)
     /// 2. **Deterministic key derivation** that survives contract upgrades
     /// 3. **Replay protection** for the same logical notification event
+    #[allow(deprecated)]
     pub fn create_notification(
         env: &Env,
         recipient: Address,
@@ -420,6 +421,7 @@ impl NotificationSystem {
     }
 
     /// Update notification status
+    #[allow(deprecated)]
     pub fn update_notification_status(
         env: &Env,
         notification_id: &BytesN<32>,
@@ -468,6 +470,7 @@ impl NotificationSystem {
     }
 
     /// Update user notification preferences
+    #[allow(deprecated)]
     pub fn update_user_preferences(
         env: &Env,
         user: &Address,

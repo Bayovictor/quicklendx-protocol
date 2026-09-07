@@ -10,7 +10,7 @@ use crate::protocol_limits::{
 use crate::storage::InvoiceStorage;
 use crate::types::BidStatus;
 use crate::types::{DisputeStatus, Invoice, InvoiceMetadata, InvoiceStatus};
-use soroban_sdk::{contracttype, symbol_short, vec, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{contracttype, vec, Address, Bytes, Env, String, Vec};
 
 /// Maximum normalized tags allowed on an invoice.
 pub const MAX_INVOICE_TAG_COUNT: u32 = 10;
@@ -632,6 +632,32 @@ impl InvestorVerificationStorage {
             .instance()
             .get(&Self::VERIFIED_INVESTORS_KEY)
             .unwrap_or(vec![env])
+    }
+
+    pub fn verify_investor(env: &Env, investor: &Address, limit: i128) {
+        let mut verification = Self::get(env, investor).unwrap_or(InvestorVerification {
+            investor: investor.clone(),
+            status: BusinessVerificationStatus::Pending,
+            verified_at: None,
+            verified_by: None,
+            kyc_data: soroban_sdk::String::from_str(env, ""),
+            investment_limit: 0,
+            submitted_at: env.ledger().timestamp(),
+            tier: InvestorTier::Basic,
+            risk_level: InvestorRiskLevel::Low,
+            risk_score: 0,
+            total_invested: 0,
+            total_returns: 0,
+            successful_investments: 0,
+            defaulted_investments: 0,
+            last_activity: env.ledger().timestamp(),
+            rejection_reason: None,
+            compliance_notes: None,
+        });
+        verification.status = BusinessVerificationStatus::Verified;
+        verification.verified_at = Some(env.ledger().timestamp());
+        verification.investment_limit = limit;
+        Self::update(env, &verification);
     }
 
     pub fn get_pending_investors(env: &Env) -> Vec<Address> {
@@ -2124,7 +2150,7 @@ pub fn validate_evidence_hash(evidence_hash: &Bytes) -> Result<(), QuickLendXErr
 /// @param hash The transaction hash string to validate.
 /// @return Ok(()) if valid 64-char hex, Err(InvalidTransactionHash) otherwise.
 pub fn validate_transaction_hash(
-    env: &soroban_sdk::Env,
+    _env: &soroban_sdk::Env,
     hash: &soroban_sdk::String,
 ) -> Result<(), crate::errors::QuickLendXError> {
     if hash.len() != 64 {

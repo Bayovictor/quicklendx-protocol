@@ -6,10 +6,9 @@
 use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symbol, Vec};
 
 use crate::errors::QuickLendXError;
-use crate::protocol_limits;
 use crate::types::{
-    BidStatus, BusinessFreezeReason, FreezeInfo, InvestmentStatus, Invoice, InvoiceCategory, InvoiceLock, InvestorFreezeInfo, InvoiceStatus, PlatformFeeConfig,
-    PruneReport, RebuildReport,
+    BidStatus, BusinessFreezeReason, FreezeInfo, InvestmentStatus, InvestorFreezeInfo, Invoice,
+    InvoiceCategory, InvoiceLock, InvoiceStatus, PlatformFeeConfig, PruneReport, RebuildReport,
 };
 
 /// Default TTL threshold for persistent storage (adjust the value as needed)
@@ -545,6 +544,25 @@ impl InvoiceStorage {
         }
     }
 
+    pub fn set_invoice_lock(env: &Env, invoice_id: &BytesN<32>, lock: InvoiceLock) {
+        let key = DataKey::FrozenInvoice(invoice_id.clone());
+        env.storage().persistent().set(&key, &lock);
+        extend_persistent_ttl(env, &key);
+    }
+
+    pub fn get_invoice_lock(env: &Env, invoice_id: &BytesN<32>) -> InvoiceLock {
+        let key = DataKey::FrozenInvoice(invoice_id.clone());
+        let result: InvoiceLock = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(InvoiceLock::None);
+        if result.is_locked() {
+            extend_persistent_ttl(env, &key);
+        }
+        result
+    }
+
     /// Guard that rejects actions on locks older than the time limit.
     ///
     /// Returns `InvoiceLockExpired` if the invoice has been frozen for longer
@@ -634,6 +652,10 @@ impl InvoiceStorage {
 
     pub fn get_invoices_by_status(env: &Env, status: InvoiceStatus) -> Vec<BytesN<32>> {
         Self::get_by_status(env, status)
+    }
+
+    pub fn get_count_by_status(env: &Env, status: InvoiceStatus) -> u32 {
+        Self::get_by_status(env, status).len() as u32
     }
 
     pub fn get(env: &Env, invoice_id: &BytesN<32>) -> Option<Invoice> {
