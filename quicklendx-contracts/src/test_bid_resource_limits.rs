@@ -1011,3 +1011,247 @@ fn test_bid_limits_constants_are_sane() {
     assert!(MAX_BIDS_PER_INVOICE > 0);
     assert!(MAX_BIDS_PER_INVOICE <= 100);
 }
+
+// ===========================================================================
+// 19. accept_bid rejects stale / expired / wrong-invoice bids
+// ===========================================================================
+
+#[test]
+fn test_accept_bid_rejects_expired_bid() {
+    let (env, client, admin, business) = setup();
+    client.set_max_active_bids_per_investor(&admin, &INVESTOR_BID_LIMIT_DISABLED);
+
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    let investor = create_investor(&env, &client);
+    let bid_id = place_bid(&env, &client, &investor, &invoice_id, 5_000, 6_000, 1);
+
+    // Advance past bid expiry (default TTL is 7 days)
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 8 * SECONDS_PER_DAY);
+
+    let err = client
+        .try_accept_bid(&invoice_id, &bid_id)
+        .unwrap_err()
+        .expect("contract error");
+    assert_eq!(err, QuickLendXError::BidStale);
+}
+
+#[test]
+fn test_accept_bid_rejects_cancelled_bid() {
+    let (env, client, admin, business) = setup();
+    client.set_max_active_bids_per_investor(&admin, &INVESTOR_BID_LIMIT_DISABLED);
+
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    let investor = create_investor(&env, &client);
+    let bid_id = place_bid(&env, &client, &investor, &invoice_id, 5_000, 6_000, 1);
+
+    cancel_bid_via_storage(&env, &client, &bid_id);
+
+    let err = client
+        .try_accept_bid(&invoice_id, &bid_id)
+        .unwrap_err()
+        .expect("contract error");
+    assert_eq!(err, QuickLendXError::InvalidStatus);
+}
+
+#[test]
+fn test_accept_bid_rejects_wrong_invoice() {
+    let (env, client, admin, business) = setup();
+    client.set_max_active_bids_per_investor(&admin, &INVESTOR_BID_LIMIT_DISABLED);
+
+    let invoice1 = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice1);
+    let invoice2 = store_invoice(&env, &client, &business, 20_000_000);
+    client.verify_invoice(&admin, &invoice2);
+
+    let investor = create_investor(&env, &client);
+    let bid_id = place_bid(&env, &client, &investor, &invoice1, 5_000, 6_000, 1);
+
+    let err = client
+        .try_accept_bid(&invoice2, &bid_id)
+        .unwrap_err()
+        .expect("contract error");
+    assert_eq!(err, QuickLendXError::Unauthorized);
+}
+
+#[test]
+fn test_accept_bid_rejects_nonexistent_bid() {
+    let (env, client, admin, business) = setup();
+
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    let fake_bid_id = BytesN::from_array(&env, &[0xFF; 32]);
+    let err = client
+        .try_accept_bid(&invoice_id, &fake_bid_id)
+        .unwrap_err()
+        .expect("contract error");
+    assert_eq!(err, QuickLendXError::StorageKeyNotFound);
+}
+
+// ===========================================================================
+// 20. Adversarial: max-size bid collection + full lifecycle
+// ===========================================================================
+
+#[test]
+fn test_adversarial_max_bids_full_lifecycle() {
+    let (env, client, admin, business) = setup();
+    client.set_max_active_bids_per_investor(&admin, &INVESTOR_BID_LIMIT_DISABLED);
+
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    // Fill to maximum
+    let mut bid_ids = SorobanVec::<BytesN<32>>::new(&env);
+    for i in 0..MAX_BIDS_PER_INVOICE {
+        let inv = create_investor(&env, &client);
+        let bid_id = place_bid(
+            &env,
+            &client,
+            &inv,
+            &invoice_id,
+            1_000 + i as i128,
+            1_100 + i as i128,
+            i as u8,
+        );
+        bid_ids.push_back(bid_id);
+    }
+
+    // Cannot place one more
+    let overflow = create_investor(&env, &client);
+    assert_place_bid_err(
+        &client,
+        &overflow,
+        &invoice_id,
+        10_000,
+        11_000,
+        [0xFF; 32],
+        QuickLendXError::MaxBidsPerInvoiceExceeded,
+    );
+
+    // Ranking still works at max capacity
+    let ranked = client.get_ranked_bids(&invoice_id);
+    assert_eq!(ranked.len(), MAX_BIDS_PER_INVOICE);
+
+    // Best bid is the highest-ranked
+    let best = client.get_best_bid(&invoice_id).expect("best must exist");
+    assert_eq!(best.bid_id, ranked.get(0).unwrap().bid_id);
+
+    // Cancel all bids to free slots
+    for i in 0..MAX_BIDS_PER_INVOICE {
+        cancel_bid_via_storage(&env, &client, &bid_ids.get(i).unwrap());
+    }
+
+    // Now new bids can be placed
+    let new_investor = create_investor(&env, &client);
+    let result = client.try_place_bid(
+        &new_investor,
+        &invoice_id,
+        &10_000,
+        &11_000,
+        &BytesN::from_array(&env, &[0xAA; 32]),
+    );
+    assert!(result.is_ok());
+}
+
+// ===========================================================================
+// 21. State safety: no partial state after rejection
+// ===========================================================================
+
+#[test]
+fn test_investor_limit_rejected_bid_no_partial_state() {
+    let (env, client, admin, business) = setup();
+    client.set_max_active_bids_per_investor(&admin, &2);
+
+    let investor = create_investor(&env, &client);
+
+    let inv1 = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &inv1);
+    place_bid(&env, &client, &investor, &inv1, 1_000, 1_100, 1);
+
+    let inv2 = store_invoice(&env, &client, &business, 20_000_000);
+    client.verify_invoice(&admin, &inv2);
+    place_bid(&env, &client, &investor, &inv2, 1_000, 1_100, 2);
+
+    // At limit, third bid must fail
+    let inv3 = store_invoice(&env, &client, &business, 30_000_000);
+    client.verify_invoice(&admin, &inv3);
+    assert_place_bid_err(
+        &client,
+        &investor,
+        &inv3,
+        1_000,
+        1_100,
+        [0xFF; 32],
+        QuickLendXError::MaxActiveBidsPerInvestorExceeded,
+    );
+
+    // Verify exactly 2 active bids remain
+    let active = get_active_investor_bid_count(&env, &client, &investor);
+    assert_eq!(active, 2);
+}
+
+// ===========================================================================
+// 22. Ranking correctness: verifies strict descending profit order
+// ===========================================================================
+
+#[test]
+fn test_ranking_strictly_descending_profit() {
+    let (env, client, admin, business) = setup();
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    let inv1 = create_investor(&env, &client);
+    let inv2 = create_investor(&env, &client);
+    let inv3 = create_investor(&env, &client);
+
+    place_bid(&env, &client, &inv1, &invoice_id, 1_000, 5_000, 1); // profit=4000
+    place_bid(&env, &client, &inv2, &invoice_id, 2_000, 4_000, 2); // profit=2000
+    place_bid(&env, &client, &inv3, &invoice_id, 3_000, 3_500, 3); // profit=500
+
+    let ranked = client.get_ranked_bids(&invoice_id);
+    assert_eq!(ranked.len(), 3);
+
+    for i in 1..ranked.len() {
+        let prev = ranked.get(i - 1).unwrap();
+        let cur = ranked.get(i).unwrap();
+        let prev_profit = prev.expected_return - prev.bid_amount;
+        let cur_profit = cur.expected_return - cur.bid_amount;
+        assert!(prev_profit >= cur_profit);
+    }
+}
+
+// ===========================================================================
+// 23. TTL boundary: bid placed at min TTL (1 day) expires correctly
+// ===========================================================================
+
+#[test]
+fn test_min_ttl_bid_expires_at_boundary() {
+    let (env, client, admin, business) = setup();
+    client.set_bid_ttl_days(&admin, &1);
+
+    let invoice_id = store_invoice(&env, &client, &business, 10_000_000);
+    client.verify_invoice(&admin, &invoice_id);
+
+    let investor = create_investor(&env, &client);
+    let bid_id = place_bid(&env, &client, &investor, &invoice_id, 5_000, 6_000, 1);
+
+    let bid = client.get_bid(&bid_id).unwrap();
+    let expiry = bid.expiration_timestamp;
+
+    // Just before expiry: bid is still valid
+    env.ledger().set_timestamp(expiry - 1);
+    let best = client.get_best_bid(&invoice_id);
+    assert!(best.is_some());
+
+    // At expiry: bid is expired
+    env.ledger().set_timestamp(expiry);
+    let best_after = client.get_best_bid(&invoice_id);
+    assert!(best_after.is_none());
+
+    client.reset_bid_ttl_to_default(&admin);
+}

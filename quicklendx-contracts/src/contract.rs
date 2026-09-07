@@ -310,9 +310,18 @@ impl QuickLendXContract {
             InvoiceStorage::require_lock_within_time_limit(&env, &invoice_id)?;
             return Err(QuickLendXError::InvoiceFrozen);
         }
-        let mut invoice =
+        let invoice =
             InvoiceStorage::get(&env, &invoice_id).ok_or(QuickLendXError::InvoiceNotFound)?;
-        let bid = BidStorage::get_bid(&env, &bid_id).unwrap();
+        let bid = BidStorage::get_bid(&env, &bid_id).ok_or(QuickLendXError::StorageKeyNotFound)?;
+
+        // #2449 – Validate bid state before any expensive mutations.
+        // verify_bid_match checks: bid belongs to this invoice, is Placed,
+        // has not expired, and has a positive amount. Without this guard, a
+        // stale or wrong-bid acceptance would perform costly escrow creation
+        // and invoice state mutations on invalid input.
+        crate::bid::verify_bid_match(&env, &bid, &invoice)?;
+
+        let mut invoice = invoice;
 
         invoice.mark_as_funded(
             &env,
@@ -359,9 +368,14 @@ impl QuickLendXContract {
     }
 
     pub fn withdraw_bid(env: Env, bid_id: BytesN<32>) -> Result<(), QuickLendXError> {
-        let mut bid = BidStorage::get_bid(&env, &bid_id).unwrap();
+        let mut bid =
+            BidStorage::get_bid(&env, &bid_id).ok_or(QuickLendXError::StorageKeyNotFound)?;
+        // #2449 – Only the bid owner can withdraw their bid.
+        bid.investor.require_auth();
+        BidStatus::validate_transition(&bid.status, &BidStatus::Withdrawn)?;
         bid.status = BidStatus::Withdrawn;
         BidStorage::store_bid(&env, &bid);
+        crate::events::emit_bid_withdrawn(&env, &bid);
         Ok(())
     }
 

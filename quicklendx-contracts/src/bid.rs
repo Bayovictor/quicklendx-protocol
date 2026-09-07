@@ -260,19 +260,13 @@ impl BidStorage {
     }
 
     fn add_to_all_bids(env: &Env, bid_id: &BytesN<32>) {
+        // #2449 – Bid IDs are unique by construction (timestamp + counter +
+        // pattern in `generate_unique_bid_id`), so the O(n) duplicate scan
+        // previously used here is unnecessary.  Direct push keeps this O(1).
         let mut bids = Self::get_all_bids(env);
-        let mut exists = false;
-        for bid in bids.iter() {
-            if bid == *bid_id {
-                exists = true;
-                break;
-            }
-        }
-        if !exists {
-            bids.push_back(bid_id.clone());
-            env.storage().persistent().set(&Self::all_bids_key(), &bids);
-            extend_persistent_ttl(env, &Self::all_bids_key());
-        }
+        bids.push_back(bid_id.clone());
+        env.storage().persistent().set(&Self::all_bids_key(), &bids);
+        extend_persistent_ttl(env, &Self::all_bids_key());
     }
     fn invoice_bid_count_key(invoice_id: &BytesN<32>) -> BidIndexKey {
         BidIndexKey::Count(invoice_id.clone())
@@ -300,20 +294,12 @@ impl BidStorage {
     }
 
     fn add_to_investor_bids(env: &Env, investor: &Address, bid_id: &BytesN<32>) {
+        // #2449 – Bid IDs are unique by construction; skip the O(n) scan.
         let key = Self::investor_bids_key(investor);
         let mut bids = Self::get_bids_by_investor_all(env, investor);
-        let mut exists = false;
-        for bid in bids.iter() {
-            if bid == *bid_id {
-                exists = true;
-                break;
-            }
-        }
-        if !exists {
-            bids.push_back(bid_id.clone());
-            env.storage().persistent().set(&key, &bids);
-            extend_persistent_ttl(env, &key);
-        }
+        bids.push_back(bid_id.clone());
+        env.storage().persistent().set(&key, &bids);
+        extend_persistent_ttl(env, &key);
     }
 
     pub fn store_bid(env: &Env, bid: &Bid) {
@@ -1137,26 +1123,6 @@ impl BidStorage {
             idx += 1;
         }
         best
-    }
-
-    /// Return the index of the best bid inside `records` using `compare_bids`.
-    fn select_best_index(records: &Vec<Bid>) -> Option<u32> {
-        if records.is_empty() {
-            return None;
-        }
-
-        let mut best_idx: u32 = 0;
-        let mut best_bid = records.get(0).unwrap();
-        let mut idx: u32 = 1;
-        while idx < records.len() {
-            let candidate = records.get(idx).unwrap();
-            if Self::compare_bids(&candidate, &best_bid) == Ordering::Greater {
-                best_idx = idx;
-                best_bid = candidate;
-            }
-            idx += 1;
-        }
-        Some(best_idx)
     }
 
     /// Return the highest-ranked placed bid for an invoice.
