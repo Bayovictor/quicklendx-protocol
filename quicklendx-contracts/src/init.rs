@@ -501,7 +501,7 @@ impl ProtocolInitializer {
         params: &InitializationParams,
     ) -> Result<(), QuickLendXError> {
         // VALIDATION: Fee basis points (0% to 10%)
-        if params.fee_bps < MIN_FEE_BPS || params.fee_bps > MAX_FEE_BPS {
+        if params.fee_bps > MAX_FEE_BPS {
             return Err(QuickLendXError::InvalidFeeBasisPoints);
         }
 
@@ -771,7 +771,7 @@ impl ProtocolInitializer {
     /// first validation failure. Discriminants match `QuickLendXError` repr values.
     fn validate_config_params(params: &ProtocolConfigParams) -> (bool, u32) {
         // fee_bps: 0–1 000  (mirrors set_fee_config)
-        if params.fee_bps < MIN_FEE_BPS || params.fee_bps > MAX_FEE_BPS {
+        if params.fee_bps > MAX_FEE_BPS {
             return (false, QuickLendXError::InvalidFeeBasisPoints as u32);
         }
         // min_invoice_amount must be positive  (mirrors set_protocol_config)

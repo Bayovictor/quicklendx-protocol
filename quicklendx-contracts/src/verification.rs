@@ -2070,7 +2070,7 @@ pub fn validate_invoice_metadata(
             return Err(QuickLendXError::InvalidDescription);
         }
 
-        if record.1 <= 0 || record.2 < 0 {
+        if record.1 == 0 || record.2 < 0 {
             return Err(QuickLendXError::InvalidAmount);
         }
 
